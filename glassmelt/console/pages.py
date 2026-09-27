@@ -3,8 +3,8 @@
 三个页面分别对应总览、操作与记录。页面本身只做展示：数据全部通过
 ``/api/state``、``/api/trend``、``/api/alarms`` 拉取，页面里的按钮走
 ``/api/batch/start``、``/api/burner/ignite``、``/api/forehearth/gate``、
-``/api/mold/blow``、``/api/lehr/reset`` 与 ``/api/cycle``，不内嵌任何业务
-逻辑。
+``/api/mold/blow``、``/api/lehr/reset``、``/api/feeder/permit/release``
+与 ``/api/cycle``，不内嵌任何业务逻辑。
 """
 
 from __future__ import annotations
@@ -51,6 +51,12 @@ async function act(path, payload) {
   document.getElementById('out-action').textContent = JSON.stringify(result, null, 2);
   refresh();
 }
+async function releasePermit(verdict) {
+  const operator = window.prompt('复核人姓名');
+  if (!operator) { return; }
+  const note = window.prompt('复核说明（探头比对／供料处置）', '') || '';
+  act('/api/feeder/permit/release', {operator: operator, verdict: verdict, note: note});
+}
 window.addEventListener('DOMContentLoaded', () => {
   refresh();
   setInterval(refresh, 5000);
@@ -88,7 +94,9 @@ def _operations(path: str) -> str:
             "<button onclick=\"act('/api/forehearth/gate', {path: 'reheat'})\">再升温开闸板</button>"
             "<button onclick=\"act('/api/mold/blow', {path: 'cycle'})\">吹气</button>"
             "<button onclick=\"act('/api/lehr/reset', {})\">退火复位</button>"
-            "<button onclick=\"act('/api/cycle', {load: 0.85})\">推进周期</button></section>"
+            "<button onclick=\"act('/api/cycle', {load: 0.85})\">推进周期</button>"
+            "<button class='warn' onclick=\"releasePermit('probe_fault')\">探头问题·复核放行</button>"
+            "<button class='warn' onclick=\"releasePermit('real_deviation')\">确认真偏·复核放行</button></section>"
             "<section><h2>顺序</h2>"
             "<button onclick=\"act('/api/start')\">启动顺序</button>"
             "<button class='warn' onclick=\"act('/api/stop')\">停炉顺序</button></section>"

@@ -94,6 +94,14 @@ class ConsoleAPI:
         path = str(payload.get("path", "cycle"))
         return self._guard(lambda: self.platform.blow_mold(path=path))
 
+    def release_permit(self, payload: dict) -> dict:
+        """偏差许可的人工复核放行：复核人、结论与说明都来自请求体。"""
+
+        operator = str(payload.get("operator", ""))
+        verdict = str(payload.get("verdict", ""))
+        note = str(payload.get("note", ""))
+        return self._guard(lambda: self.platform.release_permit(operator, verdict, note))
+
     def reset_lehr(self, payload: dict) -> dict:
         reason = str(payload.get("reason", "控制台触发的退火复位"))
         return self._guard(lambda: self.platform.reset_lehr(reason=reason))

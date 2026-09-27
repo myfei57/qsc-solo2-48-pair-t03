@@ -31,6 +31,10 @@ limits:
     gob_mass_tolerance_g: 4.0
     cut_window_ms: 240.0
     recover_gob_mass_g: 172.0
+  permit:
+    drift_allow_g: 1.5
+    budget_g: 6.0
+    streak_max: 4
   mold:
     close_min_force_kn: 42.0
     blow_pressure_kpa: 320.0

@@ -3,7 +3,8 @@
 ``Platform`` 把各组件按真实调用链接起来，并暴露四件事：启动
 顺序、停炉顺序、控制循环和状态快照。控制循环每个周期做六件事：按负荷与
 拉引量调整液面并按液面门控投料、按投料秤基线折算配比、维持燃烧与分区、
-按稳温结论决定闸板、走一遍成型循环、最后按退火曲线结算网带与加热功率。
+按稳温结论决定闸板、把料滴偏记入偏差累计许可后走一遍成型循环（许可停住
+时成型停在当场等复核）、最后按退火曲线结算网带与加热功率。
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from .eventbus import Event, EventBus
 from .feeder.cut import Shear
 from .feeder.cycle import FormingCycle
 from .feeder.gob import GobFormer
+from .feeder.permit import DeviationPermit
 from .forehearth.gate import ForehearthGate
 from .forehearth.steady import ForehearthSteady
 from .furnace.draft import DraftFan
@@ -160,6 +162,9 @@ class Platform:
         self.trip = TripInterlock(self.clock, self.bus, self.zones)
 
         self.gob = GobFormer(self.clock, self.bus, self.config.feeder)
+        self.permit = DeviationPermit(
+            self.clock, self.bus, self.config.permit, self.config.feeder
+        )
         self.shear = Shear(self.bus, self.config.feeder)
         self.forming = FormingCycle(self.bus)
         self.closer = MoldCloser(self.clock, self.bus, self.config.mold)
@@ -195,6 +200,7 @@ class Platform:
             ("temp", "anneal", "anneal-thermocouple"),
             ("temp", "latch", "anneal-protection-latch"),
             ("feeder", "gob", "gob-former"),
+            ("feeder", "permit", "deviation-permit"),
             ("feeder", "shear", "shear-blade"),
             ("mold", "closer", "mold-closer"),
             ("mold", "blow", "blow-station"),
@@ -271,6 +277,8 @@ class Platform:
             self._note(steps, "gate_open", opening_pct=round(gate.opening_pct, 2))
 
             gob = self.gob.form(self.config.feeder.gob_mass_target_g)
+            self.permit.observe(gob)
+            self.permit.require_clear()
             self._note(steps, "gob_form", mass_g=round(gob.mass_g, 3))
 
             cut = self.shear.feed(gob)
@@ -340,8 +348,12 @@ class Platform:
                 self.gate.close("料道温度漂移")
 
             gob = self.gob.form(state.gob_mass_g)
-            cut = self.shear.feed(gob)
-            run = self.forming.run(gob, self.closer, self.blow, self.filler)
+            decision = self.permit.observe(gob)
+            cut = None
+            run = None
+            if not decision.held:
+                cut = self.shear.feed(gob)
+                run = self.forming.run(gob, self.closer, self.blow, self.filler)
 
             anneal = self.evaluate_anneal(self._anneal_temperature(state.load))
 
@@ -366,8 +378,11 @@ class Platform:
                 "stability": stability.as_dict(),
                 "gate": self.gate.snapshot(),
                 "gob": gob.as_dict(),
-                "cut": cut.as_dict(),
-                "forming": run.as_dict(),
+                "permit": decision.as_dict(),
+                "cut": cut.as_dict() if cut else None,
+                "forming": run.as_dict()
+                if run
+                else {"held": True, "reason": "偏差累计许可停住，待人工复核"},
                 "anneal": anneal,
                 "zones": self.zones.snapshot(),
             }
@@ -448,6 +463,7 @@ class Platform:
         """按给定路径吹气：正常循环走 cycle，补料重试走 retry。"""
 
         with self._lock:
+            self.permit.require_clear()
             if path == "retry":
                 gob = self.gob.form(self.gob.recover_mass())
                 run = self.forming.retry(gob, self.closer, self.blow, self.filler, reason)
@@ -455,6 +471,17 @@ class Platform:
             closure = self.closer.close()
             outcome = self.blow.normal(closure)
             return {"retry": False, "closure": closure.as_dict(), "blow": outcome.as_dict()}
+
+    def release_permit(self, operator: str, verdict: str, note: str = "") -> dict:
+        """偏差许可的人工复核放行：登记复核人与结论后才解除成型停住。"""
+
+        with self._lock:
+            record = self.permit.release(operator, verdict, note)
+            return {
+                "released": True,
+                "release": record.as_dict(),
+                "permit": self.permit.snapshot(),
+            }
 
     def reset_lehr(self, reason: str = "退火复位") -> dict:
         """退火告警复位并释放闩锁，随后让网带与加热器回到正常档。"""
@@ -587,6 +614,7 @@ class Platform:
             "forehearth_above_gate_min": self.forehearth_temp.is_above_gate_min(),
             "closure": self.closer.snapshot(),
             "mold_closed": self.closer.is_closed(),
+            "permit": self.permit.snapshot(),
             "anneal_alarm": self.alarm.snapshot(),
             "anneal_latch": self.latch.snapshot(),
             "zone_revision": self.zones.revision,
@@ -633,6 +661,7 @@ class Platform:
                 "/api/burner/ignite",
                 "/api/burner/trip",
                 "/api/forehearth/gate",
+                "/api/feeder/permit/release",
                 "/api/mold/blow",
                 "/api/lehr/reset",
                 "/api/scale/calibrate",
@@ -682,6 +711,7 @@ class Platform:
             "forehearth": self.forehearth_temp.snapshot(),
             "gate": self.gate.snapshot(),
             "gob": self.gob.snapshot(),
+            "permit": self.permit.snapshot(),
             "shear": self.shear.snapshot(),
             "forming": self.forming.snapshot(),
             "mold": {
@@ -725,6 +755,7 @@ def build_platform(
             forehearth=effective.forehearth,
             temp=effective.temp,
             feeder=effective.feeder,
+            permit=effective.permit,
             mold=effective.mold,
             lehr=effective.lehr,
             batch=effective.batch,

@@ -2,8 +2,9 @@
 
 配置来自 YAML（由 vendored PyYAML 解析），覆盖玻璃液面带、熔化温度区间、
 助燃风与燃气上限、供料道稳温带与保持时间、退火告警阈值、料滴质量公差、
-合模力下限、网带快慢速与投料秤标定范围。任何缺失或越界取值都在装配阶段
-抛出 :class:`ConfigError`，不允许带着半份配置启动控制链。
+偏差累计许可的豁免额与预算、合模力下限、网带快慢速与投料秤标定范围。
+任何缺失或越界取值都在装配阶段抛出 :class:`ConfigError`，不允许带着半份
+配置启动控制链。
 """
 
 from __future__ import annotations
@@ -225,6 +226,26 @@ class FeederLimits:
 
 
 @dataclass(frozen=True)
+class PermitLimits:
+    """料滴偏差累计许可约束。"""
+
+    drift_allow_g: float
+    budget_g: float
+    streak_max: int
+
+    @classmethod
+    def from_mapping(cls, section: Mapping[str, Any]) -> "PermitLimits":
+        limits = cls(
+            drift_allow_g=_number(section, "drift_allow_g", minimum=0.0),
+            budget_g=_number(section, "budget_g", minimum=0.0),
+            streak_max=int(_number(section, "streak_max", minimum=1.0)),
+        )
+        if limits.budget_g <= 0:
+            raise ConfigError("偏差累计预算必须为正", component="config")
+        return limits
+
+
+@dataclass(frozen=True)
 class MoldLimits:
     """合模与吹气约束。"""
 
@@ -338,6 +359,7 @@ class PlatformConfig:
     forehearth: ForehearthLimits
     temp: TempLimits
     feeder: FeederLimits
+    permit: PermitLimits
     mold: MoldLimits
     lehr: LehrLimits
     batch: BatchLimits
@@ -373,6 +395,7 @@ class PlatformConfig:
             forehearth=ForehearthLimits.from_mapping(_section(limits, "forehearth")),
             temp=TempLimits.from_mapping(_section(limits, "temp")),
             feeder=FeederLimits.from_mapping(_section(limits, "feeder")),
+            permit=PermitLimits.from_mapping(_section(limits, "permit")),
             mold=MoldLimits.from_mapping(_section(limits, "mold")),
             lehr=LehrLimits.from_mapping(_section(limits, "lehr")),
             batch=BatchLimits.from_mapping(_section(limits, "batch")),
@@ -431,6 +454,11 @@ def default_config() -> PlatformConfig:
             gob_mass_tolerance_g=4.0,
             cut_window_ms=240.0,
             recover_gob_mass_g=172.0,
+        ),
+        permit=PermitLimits(
+            drift_allow_g=1.5,
+            budget_g=6.0,
+            streak_max=4,
         ),
         mold=MoldLimits(
             close_min_force_kn=42.0,
@@ -497,6 +525,11 @@ def config_to_mapping(cfg: PlatformConfig) -> dict:
                 "gob_mass_tolerance_g": cfg.feeder.gob_mass_tolerance_g,
                 "cut_window_ms": cfg.feeder.cut_window_ms,
                 "recover_gob_mass_g": cfg.feeder.recover_gob_mass_g,
+            },
+            "permit": {
+                "drift_allow_g": cfg.permit.drift_allow_g,
+                "budget_g": cfg.permit.budget_g,
+                "streak_max": cfg.permit.streak_max,
             },
             "mold": {
                 "close_min_force_kn": cfg.mold.close_min_force_kn,
