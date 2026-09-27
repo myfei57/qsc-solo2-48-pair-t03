@@ -3,7 +3,8 @@
 成型循环的四个动作是「料滴成型 → 合模 → 吹气 → 脱模」，正常循环与补料
 重试都按这个顺序走。循环能不能进入下一拍，要看合模机构当下的状态，不能
 拿重开模之前的结论当依据——模具重开后还是照旧吹气，玻璃液会从分模缝喷
-出来。
+出来。进入循环前还要确认偏差累计许可没有停住：许可停住期间，正常循环与
+补料重试都不得合模，等人工复核放行。
 """
 
 from __future__ import annotations
@@ -60,8 +61,9 @@ class CycleResult:
 class FormingCycle:
     """成型循环执行器。"""
 
-    def __init__(self, bus: EventBus) -> None:
+    def __init__(self, bus: EventBus, permit) -> None:
         self._bus = bus
+        self._permit = permit
         self._cycles = 0
         self._retries = 0
         self._history: list[dict] = []
@@ -103,6 +105,7 @@ class FormingCycle:
     def _execute(
         self, gob, closer, blow_station, filler, path: str, reason: str
     ) -> CycleResult:
+        self._permit.require_clear(gob)
         closure = closer.close()
         readiness = self.ready(closer)
         if not readiness.ready:

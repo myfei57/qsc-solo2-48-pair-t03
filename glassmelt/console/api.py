@@ -74,6 +74,19 @@ class ConsoleAPI:
 
         return self.platform.readiness_report()
 
+    def permit(self) -> dict:
+        """偏差累计许可状态：两侧累计、预算、停住与复核记录。"""
+
+        return self.platform.permit.snapshot()
+
+    def review_permit(self, payload: dict) -> dict:
+        verdict = str(payload.get("verdict", ""))
+        reviewer = str(payload.get("reviewer", ""))
+        note = str(payload.get("note", ""))
+        return self._guard(
+            lambda: self.platform.review_forming_permit(verdict, reviewer, note)
+        )
+
     def start_batch(self, payload: dict) -> dict:
         path = str(payload.get("path", "start"))
         return self._guard(lambda: self.platform.start_charging(path=path))

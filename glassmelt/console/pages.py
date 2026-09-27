@@ -3,8 +3,8 @@
 三个页面分别对应总览、操作与记录。页面本身只做展示：数据全部通过
 ``/api/state``、``/api/trend``、``/api/alarms`` 拉取，页面里的按钮走
 ``/api/batch/start``、``/api/burner/ignite``、``/api/forehearth/gate``、
-``/api/mold/blow``、``/api/lehr/reset`` 与 ``/api/cycle``，不内嵌任何业务
-逻辑。
+``/api/mold/blow``、``/api/permit/review``、``/api/lehr/reset`` 与
+``/api/cycle``，不内嵌任何业务逻辑。
 """
 
 from __future__ import annotations
@@ -51,6 +51,12 @@ async function act(path, payload) {
   document.getElementById('out-action').textContent = JSON.stringify(result, null, 2);
   refresh();
 }
+async function reviewPermit(verdict) {
+  const reviewer = window.prompt('复核人姓名');
+  if (!reviewer) { return; }
+  const note = window.prompt('复核说明（探头核查／工艺调整）') || '';
+  act('/api/permit/review', {verdict: verdict, reviewer: reviewer, note: note});
+}
 window.addEventListener('DOMContentLoaded', () => {
   refresh();
   setInterval(refresh, 5000);
@@ -89,6 +95,9 @@ def _operations(path: str) -> str:
             "<button onclick=\"act('/api/mold/blow', {path: 'cycle'})\">吹气</button>"
             "<button onclick=\"act('/api/lehr/reset', {})\">退火复位</button>"
             "<button onclick=\"act('/api/cycle', {load: 0.85})\">推进周期</button></section>"
+            "<section><h2>偏差累计许可</h2>"
+            "<button onclick=\"reviewPermit('probe_fault')\">复核放行·探头问题</button>"
+            "<button onclick=\"reviewPermit('real_deviation')\">复核放行·真实偏差</button></section>"
             "<section><h2>顺序</h2>"
             "<button onclick=\"act('/api/start')\">启动顺序</button>"
             "<button class='warn' onclick=\"act('/api/stop')\">停炉顺序</button></section>"

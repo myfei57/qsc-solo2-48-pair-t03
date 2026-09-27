@@ -4,11 +4,11 @@
 
 ``serve``   启动控制台 HTTP 服务，可选地在启动后探测页面；
 ``demo``    在本地跑一遍完整流程（启动顺序 → 控制周期 → 投料恢复 → 点火 →
-            分区大修与跳闸 → 秤标定 → 清炉 → 退火复位 → 停炉顺序），用于
-            交付前的真实运行检查；
+            分区大修与跳闸 → 秤标定 → 清炉 → 偏差许可停住与复核 → 退火复位 →
+            停炉顺序），用于交付前的真实运行检查；
 ``status``  打印当前状态快照；
 ``config``  打印生效配置；
-``reset``   清掉落盘的投料秤标定基线。
+``reset``   清掉落盘的投料秤标定基线与偏差许可状态。
 """
 
 from __future__ import annotations
@@ -24,8 +24,10 @@ from .clock import ManualClock, SystemClock
 from .config import config_to_mapping, default_config, load_config
 from .console.server import ConsoleServer, probe_pages
 from .errors import GlassMeltError
+from .feeder.permit import PERMIT_KEY
 
 DEFAULT_DEMO_CYCLES = 12
+PERMIT_DEMO_GOBS = 8
 
 
 def _build(args: argparse.Namespace) -> Platform:
@@ -66,8 +68,10 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     clock = ManualClock() if args.fast else SystemClock()
     config = load_config(args.config) if args.config else default_config()
     platform = build_platform(config, clock=clock, storage_root=args.storage_root)
-    # 演示从干净基线起步：先清掉上一轮落盘的标定基线，避免继承上次的偏移。
+    # 演示从干净基线起步：先清掉上一轮落盘的标定基线与许可状态，
+    # 避免继承上次的偏移或未复核的停住。
     platform.store.remove(BASELINE_KEY)
+    platform.store.remove(PERMIT_KEY)
     platform.scale.restore()
 
     startup = platform.start()
@@ -82,6 +86,12 @@ def _cmd_demo(args: argparse.Namespace) -> int:
         )
         for index in range(args.cycles)
     ]
+    # 连续偏短把偏差累计许可停住，再按复核结论放行：停住 → 复核 → 恢复走一遍。
+    for _ in range(PERMIT_DEMO_GOBS):
+        platform.gob.form(config.feeder.gob_mass_target_g - 3.0)
+    permit_halt = platform.permit.snapshot()
+    permit_review = platform.review_forming_permit("probe_fault", "演示复核员", "演示用探头核查")
+
     platform.interrupt_charging("演示用投料联锁")
     platform.level.observe(config.furnace.level_target_mm - 12.0)
     resume = platform.start_charging(path="resume")
@@ -109,6 +119,8 @@ def _cmd_demo(args: argparse.Namespace) -> int:
         "startup": startup,
         "cycles_run": len(cycles),
         "last_cycle": cycles[-1] if cycles else None,
+        "permit_halt": permit_halt,
+        "permit_review": permit_review,
         "resume": resume,
         "reignition": reignition,
         "zone_map": rebuilt,
@@ -151,8 +163,15 @@ def _cmd_config(args: argparse.Namespace) -> int:
 
 def _cmd_reset(args: argparse.Namespace) -> int:
     platform = _build(args)
-    removed = platform.store.remove(BASELINE_KEY)
-    _dump({"storage_root": platform.store.root, "scale_baseline_removed": removed})
+    removed_baseline = platform.store.remove(BASELINE_KEY)
+    removed_permit = platform.store.remove(PERMIT_KEY)
+    _dump(
+        {
+            "storage_root": platform.store.root,
+            "scale_baseline_removed": removed_baseline,
+            "permit_state_removed": removed_permit,
+        }
+    )
     return 0
 
 
@@ -182,7 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
     config = sub.add_parser("config", help="打印生效配置")
     config.set_defaults(func=_cmd_config)
 
-    reset = sub.add_parser("reset", help="清掉落盘的投料秤标定基线")
+    reset = sub.add_parser("reset", help="清掉落盘的投料秤标定基线与偏差许可状态")
     reset.set_defaults(func=_cmd_reset)
     return parser
 

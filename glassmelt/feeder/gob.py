@@ -40,10 +40,11 @@ class Gob:
 class GobFormer:
     """料滴成型判定。"""
 
-    def __init__(self, clock, bus: EventBus, limits: FeederLimits) -> None:
+    def __init__(self, clock, bus: EventBus, limits: FeederLimits, permit) -> None:
         self._clock = clock
         self._bus = bus
         self._limits = limits
+        self._permit = permit
         self._index = 0
         self._epoch = 0
         self._confirmation: Gob | None = None
@@ -90,6 +91,9 @@ class GobFormer:
                 epoch=gob.epoch,
             )
         )
+        # 判成型的料滴才进偏差累计；未成型的由剪切与灌模的逐颗联锁拦下。
+        if gob.is_formed():
+            self._permit.observe(gob)
         return gob
 
     def recover_mass(self) -> float:
